@@ -16,7 +16,7 @@ type Lecture = { id:string; title:string; join_code:string; active_question_id:s
 type Question = { id:string; lecture_id:string; prompt:string; kind:Kind; options:string[]; correct_answer:string|null; explanation:string|null; parts:Part[]; status:string; sort_order:number };
 type Response = { answer:string; normalized_answer:string; answers:Record<string,string>|null; normalized_answers:Record<string,string>|null; created_at:string };
 type Count = { answer:string; count:number };
-type StudentView = { error?:string; lecture?:string; status?:string; question_id?:string; prompt?:string; parts?:Part[]; distribution?:Record<string,Count[]>; answers?:Record<string,string>[] };
+type StudentView = { error?:string; lecture?:string; status?:string; question_id?:string; answer_round?:number; prompt?:string; parts?:Part[]; distribution?:Record<string,Count[]>; answers?:Record<string,string>[] };
 let lectures:Lecture[]=[];
 let questions:Question[]=[];
 let selectedLecture='';
@@ -68,7 +68,7 @@ function renderStudent(){
  if(d.status==='waiting')body='<div class="card center"><h2>出題を待っています</h2><p>画面は自動更新されます。</p></div>';
  else {
   const parts=d.parts||[];
-  const answered=d.question_id&&localStorage.getItem(`answered:${d.question_id}`)==='1';
+  const answered=d.question_id&&(localStorage.getItem(`answered:${d.question_id}:${d.answer_round||0}`)==='1'||(!d.answer_round&&localStorage.getItem(`answered:${d.question_id}`)==='1'));
   const accepting=d.status==='open'&&!answered;
   const fields=parts.map((p,i)=>`<fieldset class="student-part"><legend>問${i+1}</legend>${p.prompt?`<h3>${esc(p.prompt)}</h3>`:''}<p class="hint">${esc(kindName(p.kind))}</p>${inputForPart(p)}</fieldset>`).join('');
   body=`<section class="card"><div class="row"><span class="badge">${esc(statusName(d.status||''))}</span><span>${parts.length}問</span></div><h2>${esc(d.prompt)}</h2>${accepting?`<form id="answer-form">${fields}<button class="primary">まとめて回答を送信</button></form>`:d.status==='open'?'<p class="success">回答を送信しました。受付終了までお待ちください。</p>':'<p>回答受付は終了しました。</p>'}<p id="notice" role="status"></p></section>`;
@@ -88,7 +88,7 @@ function renderStudent(){
   const button=form.querySelector('button')!;button.disabled=true;
   const {data,error}=await db.rpc('submit_answers',{p_code:studentCode,p_question_id:d.question_id,p_token:studentToken(),p_answers:answers});
   if(error||data?.error){message(error?.message||data.error);button.disabled=false;return;}
-  localStorage.setItem(`answered:${d.question_id}`,'1');lastView='';await loadStudent();
+  localStorage.setItem(`answered:${d.question_id}:${d.answer_round||0}`,'1');lastView='';await loadStudent();
  };
 }
 async function teacher(){const {data:{session}}=await db.auth.getSession();if(!session){renderLogin();return;}await loadTeacher();refreshTimer=window.setInterval(refreshTeacher,3000);}
@@ -124,15 +124,29 @@ function renderTeacher(){
  document.querySelector<HTMLSelectElement>('#lecture-select')?.addEventListener('change',async e=>{selectedLecture=(e.target as HTMLSelectElement).value;selectedQuestion='';await loadTeacher();});
  document.querySelectorAll<HTMLButtonElement>('[data-question]').forEach(b=>b.onclick=async()=>{selectedQuestion=b.dataset.question!;renderTeacher();});
  document.querySelector<HTMLButtonElement>('#new-question')?.addEventListener('click',()=>renderQuestionForm());
- document.querySelector<HTMLButtonElement>('#edit-question')?.addEventListener('click',()=>renderQuestionForm(q));
- document.querySelectorAll<HTMLButtonElement>('[data-state]').forEach(b=>b.onclick=async()=>{b.disabled=true;const {error}=await db.rpc('set_question_state',{p_lecture_id:selectedLecture,p_question_id:selectedQuestion,p_status:b.dataset.state});if(error){message(error.message);b.disabled=false;}else await loadTeacher();});
+ document.querySelector<HTMLButtonElement>('#edit-question')?.addEventListener('click',async()=>{const {count,error}=await db.from('responses').select('id',{count:'exact',head:true}).eq('question_id',q!.id);if(error){message(error.message);return;}if(count){message('回答を残した問題は編集できません。');return;}renderQuestionForm(q);});
+ document.querySelectorAll<HTMLButtonElement>('[data-state]:not([data-state="draft"])').forEach(b=>b.onclick=async()=>{b.disabled=true;const {error}=await db.rpc('set_question_state',{p_lecture_id:selectedLecture,p_question_id:selectedQuestion,p_status:b.dataset.state});if(error){message(error.message);b.disabled=false;}else await loadTeacher();});
+ document.querySelector<HTMLButtonElement>('[data-state="draft"]')?.addEventListener('click',async()=>{
+  const {count,error}=await db.from('responses').select('id',{count:'exact',head:true}).eq('question_id',selectedQuestion);
+  if(error){message(error.message);return;}
+  if(!count){await resetToDraft(false);return;}
+  const dialog=document.querySelector<HTMLDialogElement>('#reset-dialog')!;
+  dialog.querySelector<HTMLElement>('[data-response-count]')!.textContent=`${count}件の回答があります。`;
+  dialog.showModal();
+ });
+ document.querySelectorAll<HTMLButtonElement>('[data-reset-delete]').forEach(b=>b.onclick=async()=>{b.disabled=true;await resetToDraft(b.dataset.resetDelete==='true');});
  const qr=document.querySelector<HTMLCanvasElement>('#qr');if(qr&&l)QRCode.toCanvas(qr,joinUrl(l),{width:150,margin:1});
  renderResponses();
 }
 function joinUrl(l:Lecture){const u=new URL(location.href);u.search=`?code=${encodeURIComponent(l.join_code)}`;return u.href;}
 function questionPanel(q:Question){
  const l=lectures.find(x=>x.id===selectedLecture);const parts=questionParts(q);
- return `<div class="row"><span class="badge">${esc(statusName(q.status))}</span>${q.status==='draft'?'<button id="edit-question" class="ghost">編集</button>':''}</div><h2>${esc(q.prompt)}</h2>${parts.map((p,i)=>`<div class="part-summary"><h3>問${i+1} ${esc(p.prompt)}</h3><p>${esc(kindName(p.kind))}</p>${p.kind==='choice'?`<ol>${p.options.map(o=>`<li>${esc(o)}</li>`).join('')}</ol>`:''}</div>`).join('')}<div class="actions">${q.status!=='open'?'<button data-state="open">この問題を出題・受付開始</button>':''}${q.status==='open'?'<button data-state="closed">受付終了</button>':''}${q.status==='closed'?'<button data-state="results">回答分布・一覧を公開</button>':''}${q.status==='results'?'<button data-state="explanation">正解・解説を公開</button>':''}</div>${l?.active_question_id===q.id?'<p class="hint">この問題が学生画面に表示されています。</p>':'<p class="hint">出題すると学生画面に表示されます。</p>'}<div id="responses"></div>`;
+ return `<div class="row"><span class="badge">${esc(statusName(q.status))}</span>${q.status==='draft'?'<button id="edit-question" class="ghost">編集</button>':''}</div><h2>${esc(q.prompt)}</h2>${parts.map((p,i)=>`<div class="part-summary"><h3>問${i+1} ${esc(p.prompt)}</h3><p>${esc(kindName(p.kind))}</p>${p.kind==='choice'?`<ol>${p.options.map(o=>`<li>${esc(o)}</li>`).join('')}</ol>`:''}</div>`).join('')}<div class="actions">${q.status!=='open'?'<button data-state="open">この問題を出題・受付開始</button>':''}${q.status==='open'?'<button data-state="closed">受付終了</button>':''}${q.status==='closed'?'<button data-state="results">回答分布・一覧を公開</button>':''}${q.status==='results'?'<button data-state="explanation">正解・解説を公開</button>':''}${q.status!=='draft'?'<button data-state="draft" class="ghost">準備中に戻す</button>':''}</div>${l?.active_question_id===q.id?'<p class="hint">この問題が学生画面に表示されています。</p>':'<p class="hint">出題すると学生画面に表示されます。</p>'}<div id="responses"></div>${q.status!=='draft'?'<dialog id="reset-dialog" class="reset-dialog"><form method="dialog"><h3>準備中に戻す</h3><p data-response-count></p><p>回答を残すと問題文は編集できません。回答を削除すると取り消せません。</p><div class="actions"><button type="button" data-reset-delete="false">回答を残して戻す</button><button type="button" data-reset-delete="true" class="danger">回答を削除して戻す</button><button>キャンセル</button></div></form></dialog>':''}`;
+}
+async function resetToDraft(deleteResponses:boolean){
+ const {error}=await db.rpc('reset_question_to_draft',{p_lecture_id:selectedLecture,p_question_id:selectedQuestion,p_delete_responses:deleteResponses});
+ if(error){document.querySelector<HTMLDialogElement>('#reset-dialog')?.close();message(error.message);document.querySelectorAll<HTMLButtonElement>('[data-reset-delete]').forEach(b=>b.disabled=false);return;}
+ await loadTeacher();
 }
 function partEditor(p:Part,i:number){
  return `<fieldset class="part-editor" data-part-id="${esc(p.id)}"><legend>問${i+1}</legend><button type="button" class="remove-part ghost" aria-label="問${i+1}を削除">削除</button><label>小問の文<textarea name="part_prompt" rows="2" maxlength="1000" required>${esc(p.prompt)}</textarea></label><label>回答形式<select name="part_kind"><option value="choice" ${p.kind==='choice'?'selected':''}>選択式</option><option value="number" ${p.kind==='number'?'selected':''}>数値</option><option value="text" ${p.kind==='text'?'selected':''}>自由記述</option></select></label><label class="options-wrap" ${p.kind==='choice'?'':'hidden'}>選択肢（1行に1つ、2〜12個）<textarea name="part_options" rows="4">${esc(p.options.join('\n'))}</textarea></label><label>正解（任意）<input name="part_correct" maxlength="500" value="${esc(p.correct_answer||'')}"></label><label>解説（任意）<textarea name="part_explanation" rows="3" maxlength="4000">${esc(p.explanation||'')}</textarea></label></fieldset>`;
@@ -185,6 +199,8 @@ async function renderResponses(){
  const {data,error}=await db.from('responses').select('answer,normalized_answer,answers,normalized_answers,created_at').eq('question_id',q.id).order('created_at',{ascending:false});
  if(error){box.textContent=error.message;return;}
  const rows=(data||[]) as Response[];const parts=questionParts(q);
+ const editButton=document.querySelector<HTMLButtonElement>('#edit-question');
+ if(editButton)editButton.hidden=rows.length>0;
  box.innerHTML=`<h3>教員用回答一覧 <small>${rows.length}件</small></h3>${parts.map((p,i)=>{
   const counts=new Map<string,number>();
   rows.forEach(r=>{const value=r.normalized_answers?.[p.id]??(p.id==='main'?r.normalized_answer:undefined);if(value&&value!=='[multiple]')counts.set(value,(counts.get(value)||0)+1);});

@@ -19,6 +19,7 @@ create table if not exists public.questions (
   explanation text check (explanation is null or char_length(explanation) <= 4000),
   parts jsonb not null default '[]'::jsonb check (jsonb_typeof(parts)='array' and jsonb_array_length(parts) between 0 and 12),
   status text not null default 'draft' check (status in ('draft','open','closed','results','explanation')),
+  answer_round integer not null default 0,
   sort_order integer not null default 0,
   created_at timestamptz not null default now(),
   unique (id, lecture_id)
@@ -92,7 +93,7 @@ begin
       jsonb_build_object('id',part->>'id','prompt',part->>'prompt','kind',part->>'kind','options',part->'options') ||
       case when q.status='explanation' then jsonb_build_object('correct_answer',part->>'correct_answer','explanation',part->>'explanation') else '{}'::jsonb end);
   end loop;
-  payload := jsonb_build_object('lecture',l.title,'question_id',q.id,'prompt',q.prompt,
+  payload := jsonb_build_object('lecture',l.title,'question_id',q.id,'answer_round',q.answer_round,'prompt',q.prompt,
     'parts',safe_parts,'status',q.status);
   if q.status in ('results','explanation') then
     for part in select value from jsonb_array_elements(effective_parts) loop
@@ -220,4 +221,24 @@ begin
 end $$;
 revoke all on function public.set_question_state(uuid,uuid,text) from public;
 grant execute on function public.set_question_state(uuid,uuid,text) to authenticated;
+
+-- Return a question to draft, optionally clearing responses for a fresh round.
+create or replace function public.reset_question_to_draft(p_lecture_id uuid,p_question_id uuid,p_delete_responses boolean) returns void
+language plpgsql security definer set search_path = '' as $$
+declare l public.lectures%rowtype; q public.questions%rowtype;
+begin
+  select * into l from public.lectures where id=p_lecture_id and owner_id=auth.uid() for update;
+  if not found then raise exception '講義へのアクセス権がありません'; end if;
+  select * into q from public.questions where id=p_question_id and lecture_id=p_lecture_id for update;
+  if not found then raise exception '問題が見つかりません'; end if;
+  if p_delete_responses is null then raise exception '回答の扱いを選んでください'; end if;
+  if p_delete_responses then
+    delete from public.responses where question_id=p_question_id;
+    update public.questions set answer_round=answer_round+1 where id=p_question_id;
+  end if;
+  update public.lectures set active_question_id=null where id=p_lecture_id and active_question_id=p_question_id;
+  update public.questions set status='draft' where id=p_question_id;
+end $$;
+revoke all on function public.reset_question_to_draft(uuid,uuid,boolean) from public;
+grant execute on function public.reset_question_to_draft(uuid,uuid,boolean) to authenticated;
 
