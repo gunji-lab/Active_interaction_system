@@ -32,7 +32,7 @@ const kindName=(k:string)=>({choice:'選択式',number:'数値',text:'自由記�
 const statusName=(s:string)=>({draft:'準備中',open:'受付中',closed:'受付終了',results:'回答公開中',explanation:'解説公開中',waiting:'出題待ち'}[s]||s);
 const blankPart=():Part=>({id:crypto.randomUUID(),prompt:'',kind:'choice',options:[],correct_answer:null,explanation:null});
 function questionParts(q:Question):Part[]{return q.parts?.length?q.parts:[{id:'main',prompt:'回答',kind:q.kind,options:q.options,correct_answer:q.correct_answer,explanation:q.explanation}];}
-function shell(content:string){app.innerHTML=`<header><a class="brand" href="${location.pathname}">講義レスポンス</a><nav><a href="?teacher=1">教員</a></nav></header><main>${content}</main><footer>匿名回答 • 講義ごとの参加コード</footer>`;}
+function shell(content:string){app.innerHTML=`<header><a class="brand" href="${location.pathname}">講義レスポンス</a><nav><a href="seminar.html">ゼミ Q&A</a>　<a href="?teacher=1">教員</a></nav></header><main>${content}</main><footer>匿名回答 • 講義ごとの参加コード</footer>`;}
 function codeFromUrl(){return new URLSearchParams(location.search).get('code')?.trim().toUpperCase()||'';}
 function studentToken(){let t=localStorage.getItem('lecture-poll-token');if(!t){t=crypto.randomUUID();localStorage.setItem('lecture-poll-token',t);}return t;}
 async function start(){clearInterval(refreshTimer);if(new URLSearchParams(location.search).has('teacher'))await teacher();else await student();}
