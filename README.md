@@ -25,7 +25,7 @@
 1. Slackの[Incoming Webhookの手順](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/)で送信先チャンネルを選び、Webhook URLを作成します。URLは秘密情報なのでGitHubやこのチャットには貼らないでください。Webhookは作成時に選んだチャンネルにだけ送信します。
 2. Supabaseの **Edge Function Secrets** に `SLACK_WEBHOOK_URL` という名前でWebhook URLを保存します。
 3. Supabaseの **Edge Functions → Deploy a new function → Via Editor** で、名前を `post-seminar-to-slack` にし、[`supabase/functions/post-seminar-to-slack/index.ts`](supabase/functions/post-seminar-to-slack/index.ts) の内容を貼り付けて **Deploy function** を押します。**Verify JWT** は有効のままにしてください。
-4. ゼミ終了後、主催者画面で「受付を停止」を押します。「質問をSlackへ送信」の下書きを確認・編集し、「この内容をSlackへ送信」を押します。下書きには公開中の質問と質問者名が投稿順で入り、いいね数は入りません。複数の質問は送信前に箇条書きへ分けられます。非表示の質問は初期の下書きに入りません。
+4. ゼミ終了後、主催者画面で「受付を停止」を押します。「質問をSlackへ送信」の下書きを確認・編集し、「この内容をSlackへ送信」を押します。下書きには公開中の質問と質問者名が投稿順で入り、いいね数は入りません。投稿ごとに質問者名、改行、投稿本文の順に並びます。投稿の間は空行で区切られ、送信前に自由に編集できます。非表示の質問は初期の下書きに入りません。
 
 送信ボタンをもう一度押すと、Slackに同じ内容が再投稿されます。送信後に画面内ではボタンを無効化しますが、再読み込み後は再送できます。Webhookで投稿したSlackメッセージは、このアプリから削除できません。
 

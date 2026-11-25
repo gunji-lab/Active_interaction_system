@@ -104,7 +104,7 @@ const sentSeminars=new Set<string>();
 const slackDrafts=new Map<string,{text:string;edited:boolean}>();
 function slackPreview(s:Seminar,items:Item[]){
  const visible=[...items].filter(q=>q.status!=='hidden').sort((a,b)=>Date.parse(a.created_at)-Date.parse(b.created_at));
- return `${s.title}｜質問一覧\n${visible.map(q=>`• 【${q.author_name}】${q.body.trim().replace(/\r?\n/g,'\n  ')}`).join('\n')}`;
+ return `${s.title}｜質問一覧\n\n${visible.map(q=>`${q.author_name}\n${q.body.trim()}`).join('\n\n')}`;
 }
 function updateSlackPreview(){
  const s=seminars.find(x=>x.id===selectedSeminar),preview=document.querySelector<HTMLTextAreaElement>('#slack-preview');
@@ -139,7 +139,7 @@ function renderTeacher(){
  const s=seminars.find(x=>x.id===selectedSeminar);
  shell(`<section class="qa-title qa-title-admin"><div><p class="qa-eyebrow">主催者向け</p><h1>ゼミ Q&A 管理</h1></div><button class="quiet" id="logout">ログアウト</button></section><section class="qa-card"><div class="qa-management"><form id="new-seminar"><label>新しいゼミ<input name="title" required maxlength="120" placeholder="例：11月のラボゼミ"></label><button>作成</button></form>${seminars.length?`<label>管理するゼミ<select id="seminar-select">${seminars.map(x=>`<option value="${x.id}" ${x.id===selectedSeminar?'selected':''}>${esc(x.title)}</option>`).join('')}</select></label>`:''}</div>${s?`<div class="qa-session"><div><p class="qa-eyebrow">参加コード</p><strong>${esc(s.join_code)}</strong><a href="${esc(joinUrl(s))}" target="_blank" rel="noopener">${esc(joinUrl(s))}</a></div><canvas id="qr" aria-label="参加用QRコード"></canvas><div class="qa-session-action"><span class="qa-pill">${s.is_open?'質問受付中':'受付停止中'}</span><button id="toggle-open">${s.is_open?'受付を停止':'受付を再開'}</button><a class="qa-participant-link" href="${esc(joinUrl(s))}">参加者画面へ</a></div></div>`:'<p>ゼミを作成してください。</p>'}</section>${s?`<section class="qa-card qa-feed"><div class="qa-feed-head"><div><h2>質問一覧</h2><small id="question-count"></small></div>${renderSort()}</div><div id="question-list"></div></section>`:''}<p id="notice" role="status"></p>`);
  if(s){
-  document.querySelector<HTMLElement>('.qa-feed')!.insertAdjacentHTML('beforebegin',`<section class="qa-card qa-slack"><p class="qa-eyebrow">ゼミ終了後</p><h2>質問をSlackへ送信</h2><p>送信先はSupabaseに設定した固定チャンネルです。下書きを編集してから送信できます。複数の質問は箇条書きに分けてください。</p><textarea id="slack-preview" rows="8" maxlength="12000" aria-label="Slack送信用の下書き"></textarea><div class="qa-slack-actions"><button id="send-slack" disabled>この内容をSlackへ送信</button><small id="slack-hint"></small></div><p id="slack-notice" role="status"></p></section>`);
+  document.querySelector<HTMLElement>('.qa-feed')!.insertAdjacentHTML('beforebegin',`<section class="qa-card qa-slack"><p class="qa-eyebrow">ゼミ終了後</p><h2>質問をSlackへ送信</h2><p>送信先はSupabaseに設定した固定チャンネルです。下書きを編集してから送信できます。投稿ごとに質問者名と本文を表示します。</p><textarea id="slack-preview" rows="8" maxlength="12000" aria-label="Slack送信用の下書き"></textarea><div class="qa-slack-actions"><button id="send-slack" disabled>この内容をSlackへ送信</button><small id="slack-hint"></small></div><p id="slack-notice" role="status"></p></section>`);
   const feedCard=document.querySelector<HTMLElement>('.qa-feed')!;
   const grid=document.createElement('div');grid.className='qa-teacher-grid';feedCard.before(grid);grid.append(feedCard);
   grid.insertAdjacentHTML('beforeend','<aside class="qa-card qa-speakers"><div class="qa-speaker-head"><h2>口頭で質問</h2><small id="teacher-speaker-count"></small></div><div id="teacher-speaker-list"></div></aside>');
