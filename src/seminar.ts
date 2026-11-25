@@ -7,7 +7,7 @@ const url=import.meta.env.VITE_SUPABASE_URL;
 const key=import.meta.env.VITE_SUPABASE_ANON_KEY;
 if(!url||!key){app.innerHTML='<main><h1>初期設定が必要です</h1><p>Supabaseの公開URLとキーを設定してください。</p></main>';throw Error('Missing Supabase configuration');}
 const db=createClient(url,key);
-type Item={id:string;body:string;author_name:string;status:'open'|'answered'|'hidden';created_at:string;like_count:number;liked?:boolean};
+type Item={id:string;body:string;author_name:string;answer?:string|null;status:'open'|'answered'|'hidden';created_at:string;like_count:number;liked?:boolean};
 type Speaker={id:string;name:string;mine?:boolean};
 type Feed={error?:string;title?:string;is_open?:boolean;questions?:Item[];speakers?:Speaker[]};
 type Seminar={id:string;title:string;join_code:string;is_open:boolean;created_at:string};
@@ -26,10 +26,13 @@ const sortItems=(items:Item[])=>[...items].sort((a,b)=>sortBy==='popular'?b.like
 const dateText=(s:string)=>new Date(s).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
 function itemHtml(q:Item,teacher=false){
  const status=q.status==='answered'?'<span class="qa-answered">回答済み</span>':q.status==='hidden'?'<span class="qa-hidden">非表示</span>':'';
- return `<article class="qa-question ${q.status==='hidden'?'is-hidden':''}" data-id="${q.id}"><div class="qa-question-top">${status}<time>${esc(dateText(q.created_at))}</time></div><p class="qa-question-body">${esc(q.body)}</p><div class="qa-question-bottom"><span class="qa-author">${esc(q.author_name)}</span><div class="qa-question-actions">${teacher?`<span class="qa-like-total">♥ ${q.like_count}</span>${q.status==='open'?`<button data-status="answered" data-id="${q.id}">回答済みにする</button>`:`<button data-status="open" data-id="${q.id}">再表示</button>`}${q.status!=='hidden'?`<button class="quiet" data-status="hidden" data-id="${q.id}">非表示</button>`:''}`:`<button class="qa-like ${q.liked?'liked':''}" data-like="${q.id}" aria-pressed="${!!q.liked}" aria-label="いいね ${q.like_count}件">♥ <span>${q.like_count}</span></button>`}</div></div></article>`;
+ const answer=q.answer?`<div class="qa-answer"><strong>主催者からの回答</strong><p>${esc(q.answer)}</p></div>`:'';
+ const editor=teacher?`<form class="qa-answer-form" data-answer-id="${q.id}"><label>この質問への回答<textarea name="answer" class="qa-answer-input" maxlength="3000" rows="3" placeholder="回答を入力してください">${esc(answerDrafts.get(q.id)??q.answer??'')}</textarea></label><button type="submit">回答を保存</button><small>空欄で保存すると回答を削除します。</small></form>`:'';
+ return `<article class="qa-question ${q.status==='hidden'?'is-hidden':''}" data-id="${q.id}"><div class="qa-question-top">${status}<time>${esc(dateText(q.created_at))}</time></div><p class="qa-question-body">${esc(q.body)}</p><div class="qa-question-bottom"><span class="qa-author">${esc(q.author_name)}</span><div class="qa-question-actions">${teacher?`<span class="qa-like-total">♥ ${q.like_count}</span>${q.status==='open'?`<button data-status="answered" data-id="${q.id}">回答済みにする</button>`:`<button data-status="open" data-id="${q.id}">再表示</button>`}${q.status!=='hidden'?`<button class="quiet" data-status="hidden" data-id="${q.id}">非表示</button>`:''}`:`<button class="qa-like ${q.liked?'liked':''}" data-like="${q.id}" aria-pressed="${!!q.liked}" aria-label="いいね ${q.like_count}件">♥ <span>${q.like_count}</span></button>`}</div></div>${answer}${editor}</article>`;
 }
 function renderList(items:Item[],teacher=false){
  const list=document.querySelector<HTMLElement>('#question-list');if(!list)return;
+ if(teacher&&list.contains(document.activeElement)&&document.activeElement?.matches('.qa-answer-input'))return;
  list.innerHTML=items.length?sortItems(items).map(q=>itemHtml(q,teacher)).join(''):'<div class="qa-empty">まだ質問はありません。最初の質問を投稿してみましょう。</div>';
  document.querySelectorAll<HTMLButtonElement>('[data-sort]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.sort===sortBy)));
 }
@@ -100,6 +103,7 @@ function renderStudentShell(){
 
 let teacherItems:Item[]=[];
 let teacherSpeakers:Speaker[]=[];
+const answerDrafts=new Map<string,string>();
 const sentSeminars=new Set<string>();
 const slackDrafts=new Map<string,{text:string;edited:boolean}>();
 function slackPreview(s:Seminar,items:Item[]){
@@ -172,6 +176,18 @@ function renderTeacher(){
  const qr=document.querySelector<HTMLCanvasElement>('#qr');if(qr&&s)QRCode.toCanvas(qr,joinUrl(s),{width:150,margin:1});
  wireSort(true);
  document.querySelector<HTMLElement>('#question-list')?.addEventListener('click',async e=>{const button=(e.target as HTMLElement).closest<HTMLButtonElement>('[data-status]');if(!button)return;button.disabled=true;const {error}=await db.rpc('seminar_set_question_status',{p_seminar_id:selectedSeminar,p_question_id:button.dataset.id,p_status:button.dataset.status});if(error){notice(error.message);button.disabled=false;}else await refreshTeacher();});
+ document.querySelector<HTMLElement>('#question-list')?.addEventListener('input',e=>{
+  const input=e.target as HTMLTextAreaElement;
+  if(input.matches('.qa-answer-input'))answerDrafts.set(input.closest<HTMLFormElement>('[data-answer-id]')!.dataset.answerId!,input.value);
+ });
+ document.querySelector<HTMLElement>('#question-list')?.addEventListener('submit',async e=>{
+  const form=e.target as HTMLFormElement;if(!form.matches('[data-answer-id]'))return;
+  e.preventDefault();const button=form.querySelector<HTMLButtonElement>('button')!;button.disabled=true;
+  const id=form.dataset.answerId!,answer=form.querySelector<HTMLTextAreaElement>('textarea')!.value;
+  const {error}=await db.rpc('seminar_save_answer',{p_seminar_id:selectedSeminar,p_question_id:id,p_answer:answer});
+  if(error){notice(error.message);button.disabled=false;return;}
+  answerDrafts.delete(id);notice('回答を保存しました。');await refreshTeacher();
+ });
 }
 async function refreshTeacher(){
  if(!selectedSeminar)return;
