@@ -101,19 +101,25 @@ function renderStudentShell(){
 let teacherItems:Item[]=[];
 let teacherSpeakers:Speaker[]=[];
 const sentSeminars=new Set<string>();
+const slackDrafts=new Map<string,{text:string;edited:boolean}>();
 function slackPreview(s:Seminar,items:Item[]){
- const visible=[...items].filter(q=>q.status!=='hidden').sort((a,b)=>b.like_count-a.like_count||Date.parse(b.created_at)-Date.parse(a.created_at));
- return `${s.title}｜質問一覧\n${visible.map(q=>`• ${q.body.trim().replace(/\r?\n/g,'\n  ')}${q.like_count?`  （♥ ${q.like_count}）`:''}`).join('\n')}`;
+ const visible=[...items].filter(q=>q.status!=='hidden').sort((a,b)=>Date.parse(a.created_at)-Date.parse(b.created_at));
+ return `${s.title}｜質問一覧\n${visible.map(q=>`• 【${q.author_name}】${q.body.trim().replace(/\r?\n/g,'\n  ')}`).join('\n')}`;
 }
 function updateSlackPreview(){
  const s=seminars.find(x=>x.id===selectedSeminar),preview=document.querySelector<HTMLTextAreaElement>('#slack-preview');
  if(!s||!preview)return;
  const visible=teacherItems.filter(q=>q.status!=='hidden');
- preview.value=slackPreview(s,teacherItems);
+ const draft=slackDrafts.get(s.id);
+ if(!draft||!draft.edited){
+  const text=slackPreview(s,teacherItems);
+  slackDrafts.set(s.id,{text,edited:false});
+  preview.value=text;
+ }else if(preview.value!==draft.text)preview.value=draft.text;
  const send=document.querySelector<HTMLButtonElement>('#send-slack');
- if(send)send.disabled=s.is_open||!visible.length||sentSeminars.has(s.id);
+ if(send)send.disabled=s.is_open||!visible.length||!preview.value.trim()||sentSeminars.has(s.id);
  const hint=document.querySelector<HTMLElement>('#slack-hint');
- if(hint)hint.textContent=s.is_open?'質問の受付を停止すると送信できます。':!visible.length?'表示中の質問がありません。':sentSeminars.has(s.id)?'この画面からは送信済みです。':'非表示の質問と表示名は送信しません。';
+ if(hint)hint.textContent=s.is_open?'質問の受付を停止すると送信できます。':!visible.length?'表示中の質問がありません。':sentSeminars.has(s.id)?'この画面からは送信済みです。':'質問者名を含む下書きを編集して送信できます。';
 }
 async function teacher(){
  const {data:{session}}=await db.auth.getSession();if(!session){renderLogin();return;}
@@ -133,7 +139,7 @@ function renderTeacher(){
  const s=seminars.find(x=>x.id===selectedSeminar);
  shell(`<section class="qa-title qa-title-admin"><div><p class="qa-eyebrow">主催者向け</p><h1>ゼミ Q&A 管理</h1></div><button class="quiet" id="logout">ログアウト</button></section><section class="qa-card"><div class="qa-management"><form id="new-seminar"><label>新しいゼミ<input name="title" required maxlength="120" placeholder="例：11月のラボゼミ"></label><button>作成</button></form>${seminars.length?`<label>管理するゼミ<select id="seminar-select">${seminars.map(x=>`<option value="${x.id}" ${x.id===selectedSeminar?'selected':''}>${esc(x.title)}</option>`).join('')}</select></label>`:''}</div>${s?`<div class="qa-session"><div><p class="qa-eyebrow">参加コード</p><strong>${esc(s.join_code)}</strong><a href="${esc(joinUrl(s))}" target="_blank" rel="noopener">${esc(joinUrl(s))}</a></div><canvas id="qr" aria-label="参加用QRコード"></canvas><div class="qa-session-action"><span class="qa-pill">${s.is_open?'質問受付中':'受付停止中'}</span><button id="toggle-open">${s.is_open?'受付を停止':'受付を再開'}</button><a class="qa-participant-link" href="${esc(joinUrl(s))}">参加者画面へ</a></div></div>`:'<p>ゼミを作成してください。</p>'}</section>${s?`<section class="qa-card qa-feed"><div class="qa-feed-head"><div><h2>質問一覧</h2><small id="question-count"></small></div>${renderSort()}</div><div id="question-list"></div></section>`:''}<p id="notice" role="status"></p>`);
  if(s){
-  document.querySelector<HTMLElement>('.qa-feed')!.insertAdjacentHTML('beforebegin',`<section class="qa-card qa-slack"><p class="qa-eyebrow">ゼミ終了後</p><h2>質問をSlackへ送信</h2><p>送信先はSupabaseに設定した固定チャンネルです。以下の内容を確認してください。</p><textarea id="slack-preview" readonly rows="8" aria-label="Slack送信内容"></textarea><div class="qa-slack-actions"><button id="send-slack" disabled>この内容をSlackへ送信</button><small id="slack-hint"></small></div><p id="slack-notice" role="status"></p></section>`);
+  document.querySelector<HTMLElement>('.qa-feed')!.insertAdjacentHTML('beforebegin',`<section class="qa-card qa-slack"><p class="qa-eyebrow">ゼミ終了後</p><h2>質問をSlackへ送信</h2><p>送信先はSupabaseに設定した固定チャンネルです。下書きを編集してから送信できます。複数の質問は箇条書きに分けてください。</p><textarea id="slack-preview" rows="8" maxlength="12000" aria-label="Slack送信用の下書き"></textarea><div class="qa-slack-actions"><button id="send-slack" disabled>この内容をSlackへ送信</button><small id="slack-hint"></small></div><p id="slack-notice" role="status"></p></section>`);
   const feedCard=document.querySelector<HTMLElement>('.qa-feed')!;
   const grid=document.createElement('div');grid.className='qa-teacher-grid';feedCard.before(grid);grid.append(feedCard);
   grid.insertAdjacentHTML('beforeend','<aside class="qa-card qa-speakers"><div class="qa-speaker-head"><h2>口頭で質問</h2><small id="teacher-speaker-count"></small></div><div id="teacher-speaker-list"></div></aside>');
@@ -142,17 +148,21 @@ function renderTeacher(){
    button.disabled=true;const {error}=await db.rpc('seminar_speaker_done',{p_seminar_id:selectedSeminar,p_speaker_id:button.dataset.speakerDone});
    if(error){notice(error.message);button.disabled=false;}else await refreshTeacher();
   };
+  document.querySelector<HTMLTextAreaElement>('#slack-preview')!.oninput=e=>{
+   slackDrafts.set(s.id,{text:(e.currentTarget as HTMLTextAreaElement).value,edited:true});
+   updateSlackPreview();
+  };
   document.querySelector<HTMLButtonElement>('#send-slack')!.onclick=async()=>{
    const button=document.querySelector<HTMLButtonElement>('#send-slack')!;button.disabled=true;
    const box=document.querySelector<HTMLElement>('#slack-notice')!;box.textContent='Slackへ送信中です…';
-   const preview=document.querySelector<HTMLTextAreaElement>('#slack-preview')!.value;
-   const {data,error}=await db.functions.invoke('post-seminar-to-slack',{body:{seminar_id:s.id,preview}});
+   const draft=document.querySelector<HTMLTextAreaElement>('#slack-preview')!.value.trim();
+   const {data,error}=await db.functions.invoke('post-seminar-to-slack',{body:{seminar_id:s.id,draft}});
    if(error||data?.error){
     const response=error?.context instanceof Response?await error.context.json().catch(()=>null):null;
     box.textContent=response?.error||data?.error||'送信に失敗しました。Supabaseの関数とSlack送信先の設定を確認してください。';
     button.disabled=false;await refreshTeacher();return;
    }
-   sentSeminars.add(s.id);box.textContent=`Slackへ${data.questions}件の質問を送信しました。`;updateSlackPreview();
+   sentSeminars.add(s.id);box.textContent=`Slackへ下書きを送信しました。`;updateSlackPreview();
   };
  }
  document.querySelector<HTMLButtonElement>('#logout')!.onclick=async()=>{await db.auth.signOut();await start();};
