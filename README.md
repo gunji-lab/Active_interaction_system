@@ -15,6 +15,15 @@
 - 投稿者の本人確認は行いません。表示名は自己申告で、端末やブラウザを変えると別の参加者として扱われます。
 - 保存した質問を削除する画面はまだありません。ゼミ終了後もデータは残ります。
 
+### ゼミの質問をSlackへ送る（固定チャンネル）
+
+1. Slackの[Incoming Webhookの手順](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/)で送信先チャンネルを選び、Webhook URLを作成します。URLは秘密情報なのでGitHubやこのチャットには貼らないでください。Webhookは作成時に選んだチャンネルにだけ送信します。
+2. Supabaseの **Edge Function Secrets** に `SLACK_WEBHOOK_URL` という名前でWebhook URLを保存します。
+3. Supabaseの **Edge Functions → Deploy a new function → Via Editor** で、名前を `post-seminar-to-slack` にし、[`supabase/functions/post-seminar-to-slack/index.ts`](supabase/functions/post-seminar-to-slack/index.ts) の内容を貼り付けて **Deploy function** を押します。**Verify JWT** は有効のままにしてください。
+4. ゼミ終了後、主催者画面で「受付を停止」を押します。「質問をSlackへ送信」の確認欄を読み、「この内容をSlackへ送信」を押します。非表示の質問と表示名は送信せず、いいね順に質問を箇条書きにします。
+
+送信ボタンをもう一度押すと、Slackに同じ内容が再投稿されます。送信後に画面内ではボタンを無効化しますが、再読み込み後は再送できます。Webhookで投稿したSlackメッセージは、このアプリから削除できません。
+
 ## できること
 
 - 小問ごとに選択式・数値・自由記述を選び、正解と解説を設定
