@@ -4,3 +4,4 @@
 .reset-dialog::backdrop{background:#12263a99}
 .reset-dialog .actions{flex-wrap:wrap}
 .reset-dialog .danger{background:#a53232;color:#fff}
+:root{font-family:'Zen Maru Gothic','Hiragino Maru Gothic ProN',sans-serif}

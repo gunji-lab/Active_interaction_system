@@ -8,7 +8,8 @@ const key=import.meta.env.VITE_SUPABASE_ANON_KEY;
 if(!url||!key){app.innerHTML='<main><h1>初期設定が必要です</h1><p>Supabaseの公開URLとキーを設定してください。</p></main>';throw Error('Missing Supabase configuration');}
 const db=createClient(url,key);
 type Item={id:string;body:string;author_name:string;status:'open'|'answered'|'hidden';created_at:string;like_count:number;liked?:boolean};
-type Feed={error?:string;title?:string;is_open?:boolean;questions?:Item[]};
+type Speaker={id:string;name:string;mine?:boolean};
+type Feed={error?:string;title?:string;is_open?:boolean;questions?:Item[];speakers?:Speaker[]};
 type Seminar={id:string;title:string;join_code:string;is_open:boolean;created_at:string};
 let code=new URLSearchParams(location.search).get('code')?.trim().toUpperCase()||'';
 let currentFeed:Feed|null=null;
@@ -51,10 +52,22 @@ async function loadStudent(){
  const form=document.querySelector<HTMLFormElement>('#post-form');if(form)form.hidden=!feed.is_open;
  const count=document.querySelector<HTMLElement>('#question-count');if(count)count.textContent=`${feed.questions?.length||0}件の質問`;
  renderList(feed.questions||[]);
+ renderSpeakers(feed.speakers||[],false);
+}
+function renderSpeakers(speakers:Speaker[],teacher:boolean){
+ const list=document.querySelector<HTMLElement>(teacher?'#teacher-speaker-list':'#speaker-list');
+ if(list)list.innerHTML=speakers.length?speakers.map((s,i)=>`<div class="qa-speaker-card"><span class="qa-speaker-order">${i+1}</span><strong>${esc(s.name)}</strong>${s.mine?'<small>あなた</small>':''}${teacher?`<button class="quiet" data-speaker-done="${s.id}">対応済み</button>`:''}</div>`).join(''):'<p class="qa-speaker-empty">希望者はまだいません。</p>';
+ const count=document.querySelector<HTMLElement>(teacher?'#teacher-speaker-count':'#speaker-count');
+ if(count)count.textContent=`${speakers.length}人`;
+ if(!teacher){
+  const mine=speakers.some(s=>s.mine),button=document.querySelector<HTMLButtonElement>('#speaker-toggle');
+  if(button){button.textContent=mine?'希望を取り消す':'口頭での質問を希望';button.disabled=!mine&&!currentFeed?.is_open;button.classList.toggle('quiet',mine);}
+  const input=document.querySelector<HTMLInputElement>('#speaker-name');if(input)input.disabled=mine;
+ }
 }
 function renderStudentShell(){
  const feed=currentFeed!;
- shell(`<section class="qa-title"><div><p class="qa-eyebrow">ゼミ質疑応答</p><h1>${esc(feed.title)}</h1><p><span class="qa-pill" id="qa-status"></span> · ${esc(code)}</p></div></section><div class="qa-grid"><section class="qa-card qa-compose"><h2>質問する</h2><form id="post-form"><label>表示名<input name="name" maxlength="40" required autocomplete="nickname" value="${esc(localStorage.getItem('seminar-qa-name')||'')}" placeholder="例：田中"></label><label>質問<textarea name="body" maxlength="1000" required rows="5" placeholder="聞きたいことを書いてください"></textarea></label><button class="primary">質問を投稿</button></form><p class="qa-hint">表示名は質問の下に小さく表示されます。</p><p id="notice" role="status"></p></section><section class="qa-card qa-feed"><div class="qa-feed-head"><div><h2>みんなの質問</h2><small id="question-count"></small></div>${renderSort()}</div><div id="question-list"></div></section></div>`);
+ shell(`<section class="qa-title"><div><p class="qa-eyebrow">ゼミ質疑応答</p><h1>${esc(feed.title)}</h1><p><span class="qa-pill" id="qa-status"></span> · ${esc(code)}</p></div></section><div class="qa-grid"><section class="qa-card qa-compose"><h2>質問する</h2><form id="post-form"><label>表示名<input name="name" maxlength="40" required autocomplete="nickname" value="${esc(localStorage.getItem('seminar-qa-name')||'')}" placeholder="例：田中"></label><label>質問<textarea name="body" maxlength="1000" required rows="5" placeholder="聞きたいことを書いてください"></textarea></label><button class="primary">質問を投稿</button></form><p class="qa-hint">表示名は質問の下に小さく表示されます。</p><p id="notice" role="status"></p></section><section class="qa-card qa-feed"><div class="qa-feed-head"><div><h2>みんなの質問</h2><small id="question-count"></small></div>${renderSort()}</div><div id="question-list"></div></section><aside class="qa-card qa-speakers"><div class="qa-speaker-head"><h2>口頭で質問</h2><small id="speaker-count"></small></div><label>表示名<input id="speaker-name" maxlength="40" autocomplete="nickname" value="${esc(localStorage.getItem('seminar-qa-name')||'')}" placeholder="例：田中"></label><button id="speaker-toggle" class="qa-speaker-toggle">口頭での質問を希望</button><p id="speaker-notice" role="status"></p><div id="speaker-list"></div></aside></div>`);
  wireSort();
  document.querySelector<HTMLFormElement>('#post-form')!.onsubmit=async e=>{
   e.preventDefault();const form=e.currentTarget as HTMLFormElement;const f=new FormData(form);
@@ -63,7 +76,7 @@ function renderStudentShell(){
   const button=form.querySelector<HTMLButtonElement>('button')!;button.disabled=true;
   const {data,error}=await db.rpc('seminar_post',{p_code:code,p_token:token(),p_name:name,p_body:body});button.disabled=false;
   if(error||data?.error){notice(error?.message||data.error);return;}
-  localStorage.setItem('seminar-qa-name',name);form.querySelector<HTMLTextAreaElement>('textarea')!.value='';notice('質問を投稿しました。');await loadStudent();
+  localStorage.setItem('seminar-qa-name',name);const speakerName=document.querySelector<HTMLInputElement>('#speaker-name');if(speakerName&&!speakerName.value)speakerName.value=name;form.querySelector<HTMLTextAreaElement>('textarea')!.value='';notice('質問を投稿しました。');await loadStudent();
  };
  document.querySelector<HTMLElement>('#question-list')!.onclick=async e=>{
   const button=(e.target as HTMLElement).closest<HTMLButtonElement>('[data-like]');if(!button)return;
@@ -71,9 +84,22 @@ function renderStudentShell(){
   if(error||data?.error){notice(error?.message||data.error);button.disabled=false;return;}
   await loadStudent();
  };
+ document.querySelector<HTMLButtonElement>('#speaker-toggle')!.onclick=async()=>{
+  const input=document.querySelector<HTMLInputElement>('#speaker-name')!;
+  const name=input.value.trim();
+  const mine=currentFeed?.speakers?.some(s=>s.mine);
+  const message=document.querySelector<HTMLElement>('#speaker-notice')!;
+  if(!mine&&!name){message.textContent='表示名を入力してください。';input.focus();return;}
+  const button=document.querySelector<HTMLButtonElement>('#speaker-toggle')!;button.disabled=true;
+  const {data,error}=await db.rpc('seminar_speaker_toggle',{p_code:code,p_token:token(),p_name:name});
+  if(error||data?.error){message.textContent=error?.message||data.error;button.disabled=false;return;}
+  if(data.waiting){localStorage.setItem('seminar-qa-name',name);message.textContent='口頭質問の希望を受け付けました。';}else message.textContent='希望を取り消しました。';
+  await loadStudent();
+ };
 }
 
 let teacherItems:Item[]=[];
+let teacherSpeakers:Speaker[]=[];
 const sentSeminars=new Set<string>();
 function slackPreview(s:Seminar,items:Item[]){
  const visible=[...items].filter(q=>q.status!=='hidden').sort((a,b)=>b.like_count-a.like_count||Date.parse(b.created_at)-Date.parse(a.created_at));
@@ -108,6 +134,14 @@ function renderTeacher(){
  shell(`<section class="qa-title qa-title-admin"><div><p class="qa-eyebrow">主催者向け</p><h1>ゼミ Q&A 管理</h1></div><button class="quiet" id="logout">ログアウト</button></section><section class="qa-card"><div class="qa-management"><form id="new-seminar"><label>新しいゼミ<input name="title" required maxlength="120" placeholder="例：11月のラボゼミ"></label><button>作成</button></form>${seminars.length?`<label>管理するゼミ<select id="seminar-select">${seminars.map(x=>`<option value="${x.id}" ${x.id===selectedSeminar?'selected':''}>${esc(x.title)}</option>`).join('')}</select></label>`:''}</div>${s?`<div class="qa-session"><div><p class="qa-eyebrow">参加コード</p><strong>${esc(s.join_code)}</strong><a href="${esc(joinUrl(s))}" target="_blank" rel="noopener">${esc(joinUrl(s))}</a></div><canvas id="qr" aria-label="参加用QRコード"></canvas><div class="qa-session-action"><span class="qa-pill">${s.is_open?'質問受付中':'受付停止中'}</span><button id="toggle-open">${s.is_open?'受付を停止':'受付を再開'}</button></div></div>`:'<p>ゼミを作成してください。</p>'}</section>${s?`<section class="qa-card qa-feed"><div class="qa-feed-head"><div><h2>質問一覧</h2><small id="question-count"></small></div>${renderSort()}</div><div id="question-list"></div></section>`:''}<p id="notice" role="status"></p>`);
  if(s){
   document.querySelector<HTMLElement>('.qa-feed')!.insertAdjacentHTML('beforebegin',`<section class="qa-card qa-slack"><p class="qa-eyebrow">ゼミ終了後</p><h2>質問をSlackへ送信</h2><p>送信先はSupabaseに設定した固定チャンネルです。以下の内容を確認してください。</p><textarea id="slack-preview" readonly rows="8" aria-label="Slack送信内容"></textarea><div class="qa-slack-actions"><button id="send-slack" disabled>この内容をSlackへ送信</button><small id="slack-hint"></small></div><p id="slack-notice" role="status"></p></section>`);
+  const feedCard=document.querySelector<HTMLElement>('.qa-feed')!;
+  const grid=document.createElement('div');grid.className='qa-teacher-grid';feedCard.before(grid);grid.append(feedCard);
+  grid.insertAdjacentHTML('beforeend','<aside class="qa-card qa-speakers"><div class="qa-speaker-head"><h2>口頭で質問</h2><small id="teacher-speaker-count"></small></div><div id="teacher-speaker-list"></div></aside>');
+  document.querySelector<HTMLElement>('#teacher-speaker-list')!.onclick=async e=>{
+   const button=(e.target as HTMLElement).closest<HTMLButtonElement>('[data-speaker-done]');if(!button)return;
+   button.disabled=true;const {error}=await db.rpc('seminar_speaker_done',{p_seminar_id:selectedSeminar,p_speaker_id:button.dataset.speakerDone});
+   if(error){notice(error.message);button.disabled=false;}else await refreshTeacher();
+  };
   document.querySelector<HTMLButtonElement>('#send-slack')!.onclick=async()=>{
    const button=document.querySelector<HTMLButtonElement>('#send-slack')!;button.disabled=true;
    const box=document.querySelector<HTMLElement>('#slack-notice')!;box.textContent='Slackへ送信中です…';
@@ -133,8 +167,10 @@ async function refreshTeacher(){
  if(!selectedSeminar)return;
  const {data,error}=await db.rpc('seminar_teacher_feed',{p_seminar_id:selectedSeminar});if(error){notice(error.message);return;}
  teacherItems=data?.questions||[];
+ teacherSpeakers=data?.speakers||[];
  const count=document.querySelector<HTMLElement>('#question-count');if(count)count.textContent=`${teacherItems.filter(q=>q.status!=='hidden').length}件を表示中`;
  renderList(teacherItems,true);
+ renderSpeakers(teacherSpeakers,true);
  updateSlackPreview();
 }
 async function start(){clearInterval(refreshTimer);if(new URLSearchParams(location.search).has('teacher'))await teacher();else await student();}
